@@ -58,8 +58,7 @@ final class ISU_LatePoint_Header_Cart {
 		}
 
 		$cart  = OsCartsHelper::get_or_create_cart();
-		$items = $cart ? $cart->get_items() : [];
-		$count = is_array( $items ) ? count( $items ) : 0;
+		$count = $cart ? self::get_cart_item_count( $cart ) : 0;
 
 		$state = [
 			'count'            => $count,
@@ -70,13 +69,42 @@ final class ISU_LatePoint_Header_Cart {
 		];
 
 		if ( $create_intent && $count > 0 && class_exists( 'OsOrderIntentHelper' ) ) {
-			$order_intent = OsOrderIntentHelper::create_or_update_order_intent( $cart );
-			if ( $order_intent && ! empty( $order_intent->intent_key ) ) {
-				$state['order_intent_key'] = $order_intent->intent_key;
+			$items = $cart->get_items();
+			$count = is_array( $items ) ? count( $items ) : $count;
+			$state['count'] = $count;
+			$state['can_checkout'] = $count > 0;
+
+			if ( $count > 0 ) {
+				$order_intent = OsOrderIntentHelper::create_or_update_order_intent( $cart );
+				if ( $order_intent && ! empty( $order_intent->intent_key ) ) {
+					$state['order_intent_key'] = $order_intent->intent_key;
+				}
 			}
 		}
 
 		return $state;
+	}
+
+	/**
+	 * Counts cart items without building every booking or bundle model for badge refreshes.
+	 */
+	private static function get_cart_item_count( $cart ): int {
+		if ( ! $cart || empty( $cart->id ) || ! defined( 'LATEPOINT_TABLE_CART_ITEMS' ) ) {
+			return 0;
+		}
+
+		global $wpdb;
+
+		if ( ! $wpdb ) {
+			return 0;
+		}
+
+		return max( 0, (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . LATEPOINT_TABLE_CART_ITEMS . ' WHERE cart_id = %d',
+				(int) $cart->id
+			)
+		) );
 	}
 
 	/**
@@ -209,6 +237,9 @@ final class ISU_LatePoint_Header_Cart {
 
 				var $button;
 				var refreshTimer;
+				var cachedState = {};
+				var stateRequest = null;
+				var checkoutOpening = false;
 
 				// Creates the header button once and inserts it after Contact Us.
 				function ensureButton() {
@@ -242,6 +273,7 @@ final class ISU_LatePoint_Header_Cart {
 
 					if (!$cartButton.length) return;
 
+					cachedState = state || {};
 					$cartButton.find('.isu-lp-cart-count').text(count > 99 ? '99+' : count);
 					$cartButton.prop('hidden', count < 1);
 				}
@@ -249,8 +281,13 @@ final class ISU_LatePoint_Header_Cart {
 				// Requests the current cart state, optionally creating an order intent.
 				function requestState(createIntent) {
 					var cfg = window.isuLatepointCartMenu || {};
+					var request;
 
-					return $.ajax({
+					if (!createIntent && stateRequest) {
+						return stateRequest;
+					}
+
+					request = $.ajax({
 						type: 'post',
 						dataType: 'json',
 						url: cfg.ajaxUrl,
@@ -266,15 +303,61 @@ final class ISU_LatePoint_Header_Cart {
 						}
 
 						return {};
+					}).always(function() {
+						if (!createIntent) {
+							stateRequest = null;
+						}
 					});
+
+					if (!createIntent) {
+						stateRequest = request;
+					}
+
+					return request;
 				}
 
 				// Debounces cart badge refreshes after LatePoint AJAX activity.
 				function refreshState() {
+					if (checkoutOpening) return;
+
 					window.clearTimeout(refreshTimer);
 					refreshTimer = window.setTimeout(function() {
+						if (checkoutOpening) return;
 						requestState(false);
 					}, 250);
+				}
+
+				// Marks checkout forms opened from the header cart so their Back behavior can stay cart-safe.
+				function markHeaderCartCheckout($bookingFormElement) {
+					if (!$bookingFormElement || !$bookingFormElement.length) return;
+
+					$bookingFormElement.addClass('isu-lp-header-cart-checkout');
+					$bookingFormElement.attr('data-isu-lp-header-cart-checkout', '1');
+				}
+
+				// Restarts header-cart checkout when Back is pressed on Customer Information.
+				function interceptHeaderCartCustomerBack(event) {
+					var trigger = event.target && event.target.closest ? event.target.closest('.latepoint-prev-btn') : null;
+					var bookingFormElement;
+					var currentStepInput;
+
+					if (!trigger) return;
+
+					bookingFormElement = trigger.closest('.latepoint-booking-form-element.isu-lp-header-cart-checkout');
+					if (!bookingFormElement) return;
+
+					currentStepInput = bookingFormElement.querySelector('input[name="current_step_code"]');
+					if (!currentStepInput || currentStepInput.value !== 'customer') return;
+
+					event.preventDefault();
+					event.stopPropagation();
+					if (event.stopImmediatePropagation) {
+						event.stopImmediatePropagation();
+					}
+
+					if (typeof latepoint_restart_booking_process === 'function') {
+						latepoint_restart_booking_process($(bookingFormElement));
+					}
 				}
 
 				// Opens LatePoint checkout in a lightbox from the active cart order intent.
@@ -282,11 +365,16 @@ final class ISU_LatePoint_Header_Cart {
 					event.preventDefault();
 
 					var $cartButton = ensureButton();
+					if (checkoutOpening) return;
+
+					checkoutOpening = true;
+					window.clearTimeout(refreshTimer);
 					$cartButton.addClass('is-loading');
 
 					requestState(true).then(function(state) {
 						if (!state || !state.order_intent_key || !state.checkout_route || typeof latepoint_helper === 'undefined') {
 							$cartButton.removeClass('is-loading');
+							checkoutOpening = false;
 							return;
 						}
 
@@ -310,6 +398,7 @@ final class ISU_LatePoint_Header_Cart {
 
 							latepoint_show_data_in_lightbox(response.message, 'booking-form-in-lightbox', false);
 							$bookingFormElement = $('.latepoint-lightbox-w .latepoint-booking-form-element');
+							markHeaderCartCheckout($bookingFormElement);
 							$('body').addClass('latepoint-lightbox-active');
 							latepoint_init_booking_form($bookingFormElement);
 							latepoint_init_step(response.step, $bookingFormElement);
@@ -319,7 +408,11 @@ final class ISU_LatePoint_Header_Cart {
 							}
 						}).always(function() {
 							$cartButton.removeClass('is-loading');
+							checkoutOpening = false;
 						});
+					}, function() {
+						$cartButton.removeClass('is-loading');
+						checkoutOpening = false;
 					});
 				}
 
@@ -328,6 +421,11 @@ final class ISU_LatePoint_Header_Cart {
 					requestState(false);
 
 					$('body').on('latepoint:initBookingForm latepoint:initStep latepoint:prevStepReInit', refreshState);
+					document.addEventListener('click', interceptHeaderCartCustomerBack, true);
+					document.addEventListener('keydown', function(event) {
+						if (event.key !== 'Enter' && event.key !== ' ') return;
+						interceptHeaderCartCustomerBack(event);
+					}, true);
 
 					$(document).ajaxComplete(function(event, xhr, settings) {
 						if (settings && settings.url && settings.url.indexOf('admin-ajax.php') !== -1) {

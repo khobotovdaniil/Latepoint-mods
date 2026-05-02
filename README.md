@@ -142,6 +142,14 @@ Adds a LatePoint cart icon button next to the header `Contact Us` button.
 - Shows a cart badge with the current LatePoint cart item count.
 - Hides the button when the cart is empty.
 - Opens checkout in a LatePoint lightbox from the Verify Order Details step.
+- Uses a lightweight database `COUNT(*)` for badge refreshes instead of building
+  every cart item model.
+- Debounces and reuses in-flight badge refreshes so LatePoint AJAX bursts do not
+  compete with checkout opening.
+- Creates/updates the LatePoint order intent only when the customer actually
+  opens checkout.
+- Marks header-cart checkout forms so pressing Back from Customer Information
+  restarts the flow instead of falling into stale booking steps.
 - Uses CSS spinner, not a static image.
 - Frontend only; it does not print assets in `is_admin()`.
 
@@ -257,6 +265,8 @@ Use all three together for production midnight support.
    - invoice payment request with percent and custom tips;
    - successful payment close and page reload;
    - cart icon count and checkout lightbox;
+   - header cart checkout with a bundle in the cart;
+   - Back from Order Details to Customer Information, then Back to start;
    - customer dashboard Past/Cancelled/Orders pagination;
    - customer profile timezone save and dashboard refresh;
    - empty-cart removal on Customer and Service steps;
