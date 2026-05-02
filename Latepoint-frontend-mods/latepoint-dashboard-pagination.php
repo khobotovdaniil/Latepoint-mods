@@ -458,6 +458,10 @@ function isu_latepoint_dashboard_pagination_print_assets(): void {
 		document.addEventListener('lp:paymentConfirmedContentRefreshed', function(event){
 			scheduleInit(event.detail && event.detail.container ? event.detail.container : document);
 		});
+
+		document.addEventListener('lp:customerDashboardTimeSectionsRefreshed', function(event){
+			scheduleInit(event.detail && event.detail.container ? event.detail.container : document);
+		});
 	})();
 	</script>
 	<?php

@@ -16,5 +16,15 @@ if (!defined('LP_MIDNIGHT_HOURS_DEBUG')) {
 	define('LP_MIDNIGHT_HOURS_DEBUG', false);
 }
 if (!defined('ISU_LATEPOINT_DASHBOARD_ARCHIVE_DEBUG')) {
-	define('ISU_LATEPOINT_DASHBOARD_ARCHIVE_DEBUG', true);
+	define('ISU_LATEPOINT_DASHBOARD_ARCHIVE_DEBUG', false);
 }
+
+if (!defined('ISU_LATEPOINT_CUSTOMER_TIMEZONE_DEBUG')) {
+	define('ISU_LATEPOINT_CUSTOMER_TIMEZONE_DEBUG', false);
+}
+
+// add_filter('isu_latepoint_customer_timezone_debug_enabled', function ($enabled) {
+// 	return defined('ISU_LATEPOINT_CUSTOMER_TIMEZONE_DEBUG')
+// 		? ISU_LATEPOINT_CUSTOMER_TIMEZONE_DEBUG
+// 		: $enabled;
+// });

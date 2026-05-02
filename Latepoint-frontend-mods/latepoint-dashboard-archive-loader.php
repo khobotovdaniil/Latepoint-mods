@@ -1177,6 +1177,12 @@ function isu_latepoint_dashboard_archive_print_assets(): void {
 			initAppointmentSections(document);
 			initOrders(document);
 		});
+
+		document.addEventListener('lp:customerDashboardTimeSectionsRefreshed', function(event){
+			var root = event.detail && event.detail.container ? event.detail.container : document;
+			initAppointmentSections(root);
+			initOrders(root);
+		});
 	})();
 	</script>
 	<?php

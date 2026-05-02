@@ -27,9 +27,11 @@ Recommended production files:
 - `latepoint-add-tips-before-checkout/latepoint-invoice-tips.php`
 - `latepoint-add-tips-before-checkout/latepoint-tips-order.php`
 - `Latepoint-fix/latepoint-coupon-admin-discount-fix.php`
+- `Latepoint-fix/latepoint-empty-cart-checkout-guard.php`
 - `Latepoint-fix/latepoint-midnight-datetime-normalizer.php`
 - `Latepoint-fix/latepoint-reload-after-payment-close.php`
 - `Latepoint-frontend-mods/latepoint-cart-menu.php`
+- `Latepoint-frontend-mods/latepoint-customer-timezone-profile.php`
 - `Latepoint-frontend-mods/latepoint-dashboard-archive-loader.php`
 - `Latepoint-midnight-mods/latepoint-midnight-availability.php`
 - `Latepoint-midnight-mods/latepoint-midnight-working-hours.php`
@@ -69,6 +71,10 @@ checkout orders.
 - Stores temporary selection by cart UUID.
 - Saves `order_tip_percent` and `order_tip_amount` on order conversion.
 - Custom tips save `order_tip_percent = 0` and render without a percent badge.
+- Skips the Tips step when a customer is scheduling a lesson from an already
+  placed bundle/order item.
+- Avoids running tip total/breakdown logic before the checkout tail, so earlier
+  booking steps such as bundle selection stay light.
 
 This plugin is for regular cart/order checkout. It complements, but does not
 replace, the invoice tips plugin.
@@ -85,6 +91,22 @@ Keeps coupon credit rows negative in LatePoint price breakdowns.
 This plugin is independent from the tips plugins, but it touches the same
 price-breakdown area. Keep it active if coupon discounts can appear as positive
 values or be overwritten by input masks.
+
+### `Latepoint-fix/latepoint-empty-cart-checkout-guard.php`
+
+Prevents empty LatePoint carts from continuing into checkout.
+
+- Stops `verify`, `tips`, `payment`, and `confirmation` from loading when all
+  cart items were removed before checkout.
+- Allows valid bundle scheduling flows that use `presets[order_item_id]`, even
+  when the cart itself is empty until final submit.
+- Allows normal confirmation after an order has already been created.
+- Adds a small frontend shim so removing the last cart item from the side
+  summary lets LatePoint restart the booking form cleanly.
+
+This plugin is independent from the tips plugin. The tips plugin hides its own
+step for bundle scheduling; this guard protects the wider checkout flow from
+zero-item orders.
 
 ### `Latepoint-fix/latepoint-midnight-datetime-normalizer.php`
 
@@ -125,6 +147,22 @@ Adds a LatePoint cart icon button next to the header `Contact Us` button.
 
 The checkout step can be changed with the
 `isu_latepoint_header_cart_checkout_step` filter.
+
+### `Latepoint-frontend-mods/latepoint-customer-timezone-profile.php`
+
+Adds customer timezone controls where customers and admins are more likely to
+find them.
+
+- Adds a timezone selector to customer profile/customer information forms.
+- Adds timezone editing to LatePoint admin customer edit forms.
+- Saves the value to LatePoint customer meta key `timezone_name`.
+- Uses saved customer timezone as the default booking timezone.
+- After a successful profile timezone change, refreshes the customer dashboard
+  Appointments/Orders sections and notifies dashboard plugins to reinitialize.
+
+This plugin does not try to recalculate every open booking cart after timezone
+changes. It keeps saved profile/dashboard timezone state synchronized and leaves
+active new-appointment cart summaries to LatePoint's normal flow.
 
 ### `Latepoint-frontend-mods/latepoint-dashboard-archive-loader.php`
 
@@ -220,6 +258,9 @@ Use all three together for production midnight support.
    - successful payment close and page reload;
    - cart icon count and checkout lightbox;
    - customer dashboard Past/Cancelled/Orders pagination;
+   - customer profile timezone save and dashboard refresh;
+   - empty-cart removal on Customer and Service steps;
+   - bundle lesson scheduling from an already placed order;
    - `23:xx` bookings crossing midnight;
    - `00:xx` next-day availability blocking;
    - Google Calendar/add-to-calendar exact-midnight event ranges.

@@ -37,6 +37,290 @@ function lp_order_tips_amount_param_key(): string {
 }
 
 /**
+ * Returns the current LatePoint step from AJAX params, supporting both raw and encoded requests.
+ */
+function lp_order_tips_get_request_step_code(): string {
+	static $step_code = null;
+
+	if ($step_code !== null) {
+		return $step_code;
+	}
+
+	$step_code = '';
+
+	if (class_exists('OsParamsHelper')) {
+		$step_code = (string) OsParamsHelper::get_param('current_step_code', '');
+	}
+
+	if ($step_code === '' && !empty($_REQUEST['current_step_code'])) {
+		$step_code = (string) wp_unslash($_REQUEST['current_step_code']);
+	}
+
+	if ($step_code === '') {
+		$encoded_params = lp_order_tips_get_encoded_request_params();
+		$step_code = (string) lp_order_tips_read_nested_value($encoded_params, ['current_step_code']);
+	}
+
+	return $step_code;
+}
+
+/**
+ * Checks whether the current request is far enough in checkout for tips to affect totals or breakdowns.
+ */
+function lp_order_tips_request_is_checkout_tail(): bool {
+	if (!empty($_REQUEST['order_intent_key'])) {
+		return true;
+	}
+
+	$encoded_params = lp_order_tips_get_encoded_request_params();
+	if (!empty($encoded_params['order_intent_key'])) {
+		return true;
+	}
+
+	$step_code = lp_order_tips_get_request_step_code();
+
+	if ($step_code === '') {
+		return false;
+	}
+
+	$step_parent = explode('__', $step_code)[0] ?? $step_code;
+
+	return in_array($step_parent, ['verify', 'tips', 'payment', 'confirmation'], true);
+}
+
+/**
+ * Reads a nested value from an array or object without assuming one exact LatePoint request shape.
+ */
+function lp_order_tips_read_nested_value($source, array $path) {
+	foreach ($path as $key) {
+		if (is_array($source) && array_key_exists($key, $source)) {
+			$source = $source[$key];
+			continue;
+		}
+
+		if (is_object($source) && isset($source->{$key})) {
+			$source = $source->{$key};
+			continue;
+		}
+
+		return null;
+	}
+
+	return $source;
+}
+
+/**
+ * Normalizes an order item id value from form params or cart item data.
+ */
+function lp_order_tips_normalize_order_item_id($value): int {
+	if (is_array($value) || is_object($value)) {
+		return 0;
+	}
+
+	return max(0, absint($value));
+}
+
+/**
+ * Parses LatePoint's encoded params payload when AJAX sends fields as one query string.
+ */
+function lp_order_tips_get_encoded_request_params(): array {
+	static $decoded_params = null;
+
+	if ($decoded_params !== null) {
+		return $decoded_params;
+	}
+
+	$decoded_params = [];
+
+	if (empty($_REQUEST['params'])) {
+		return $decoded_params;
+	}
+
+	$params = wp_unslash($_REQUEST['params']);
+	if (!is_string($params)) {
+		return $decoded_params;
+	}
+
+	if (
+		strpos($params, 'order_item_id') === false
+		&& strpos($params, 'order_item_id%5D') === false
+		&& strpos($params, 'order_item_id%255D') === false
+	) {
+		return $decoded_params;
+	}
+
+	parse_str(html_entity_decode($params, ENT_QUOTES, 'UTF-8'), $decoded_params);
+
+	return is_array($decoded_params) ? $decoded_params : [];
+}
+
+/**
+ * Returns the existing order item id used by bundle scheduling flows.
+ */
+function lp_order_tips_get_request_order_item_id(): int {
+	static $request_order_item_id = null;
+
+	if ($request_order_item_id !== null) {
+		return $request_order_item_id;
+	}
+
+	$request_order_item_id = 0;
+	$sources = [$_REQUEST, lp_order_tips_get_encoded_request_params()];
+
+	if (class_exists('OsParamsHelper')) {
+		$sources[] = [
+			'presets'          => OsParamsHelper::get_param('presets', []),
+			'active_cart_item' => OsParamsHelper::get_param('active_cart_item', []),
+			'booking'          => OsParamsHelper::get_param('booking', []),
+		];
+	}
+
+	if (class_exists('OsStepsHelper') && !empty(OsStepsHelper::$presets) && is_array(OsStepsHelper::$presets)) {
+		$sources[] = ['presets' => OsStepsHelper::$presets];
+	}
+
+	foreach ($sources as $source) {
+		if (!is_array($source)) {
+			continue;
+		}
+
+		$order_item_id = lp_order_tips_normalize_order_item_id(
+			lp_order_tips_read_nested_value($source, ['presets', 'order_item_id'])
+		);
+
+		if ($order_item_id > 0) {
+			$request_order_item_id = $order_item_id;
+			return $request_order_item_id;
+		}
+
+		$order_item_id = lp_order_tips_normalize_order_item_id(
+			lp_order_tips_read_nested_value($source, ['booking', 'order_item_id'])
+		);
+
+		if ($order_item_id > 0) {
+			$request_order_item_id = $order_item_id;
+			return $request_order_item_id;
+		}
+
+		$item_data = lp_order_tips_read_nested_value($source, ['active_cart_item', 'item_data']);
+		if (is_string($item_data) && $item_data !== '') {
+			$decoded_item_data = json_decode(html_entity_decode(wp_unslash($item_data), ENT_QUOTES, 'UTF-8'), true);
+			$item_data = is_array($decoded_item_data) ? $decoded_item_data : [];
+		}
+
+		$order_item_id = lp_order_tips_normalize_order_item_id(
+			lp_order_tips_read_nested_value($item_data, ['order_item_id'])
+		);
+
+		if ($order_item_id > 0) {
+			$request_order_item_id = $order_item_id;
+			return $request_order_item_id;
+		}
+	}
+
+	return $request_order_item_id;
+}
+
+/**
+ * Checks a cart item for an existing order item reference used when scheduling lessons from a bundle.
+ */
+function lp_order_tips_cart_item_has_existing_order_item($item): bool {
+	$order_item_id = lp_order_tips_normalize_order_item_id(lp_order_tips_read_nested_value($item, ['order_item_id']));
+	if ($order_item_id > 0) {
+		return true;
+	}
+
+	$item_data = lp_order_tips_read_nested_value($item, ['item_data']);
+	if (is_string($item_data) && $item_data !== '') {
+		$decoded_item_data = json_decode($item_data, true);
+		$item_data = is_array($decoded_item_data) ? $decoded_item_data : [];
+	}
+
+	return lp_order_tips_normalize_order_item_id(lp_order_tips_read_nested_value($item_data, ['order_item_id'])) > 0;
+}
+
+/**
+ * Detects bundle scheduling and other already-created-order flows where a new tip must not be collected.
+ */
+function lp_order_tips_is_existing_order_scheduling($cart = null): bool {
+	static $cache = [];
+
+	if (lp_order_tips_get_request_order_item_id() > 0) {
+		return true;
+	}
+
+	if (!$cart || !method_exists($cart, 'get_items')) {
+		return false;
+	}
+
+	$cache_key = !empty($cart->uuid)
+		? 'uuid:' . (string) $cart->uuid
+		: 'id:' . (string) ($cart->id ?? spl_object_id($cart));
+
+	if (array_key_exists($cache_key, $cache)) {
+		return $cache[$cache_key];
+	}
+
+	$cache[$cache_key] = false;
+
+	foreach ($cart->get_items() as $item) {
+		if (lp_order_tips_cart_item_has_existing_order_item($item)) {
+			$cache[$cache_key] = true;
+			return $cache[$cache_key];
+		}
+	}
+
+	return $cache[$cache_key];
+}
+
+/**
+ * Detects Tip rows previously added by this plugin, even if LatePoint saved them under another group key.
+ */
+function lp_order_tips_breakdown_item_is_tip($item): bool {
+	if (!is_array($item)) {
+		return false;
+	}
+
+	$label = strtolower(trim(wp_strip_all_tags((string) ($item['label'] ?? ''))));
+	$type = strtolower((string) ($item['type'] ?? ''));
+
+	return $label === strtolower(__('Tip', 'latepoint')) && ($type === '' || $type === 'charge');
+}
+
+/**
+ * Removes all existing Tip rows from after_subtotal so the displayed order breakdown stays idempotent.
+ */
+function lp_order_tips_remove_tip_rows_from_breakdown(array $rows): array {
+	if (empty($rows['after_subtotal']) || !is_array($rows['after_subtotal'])) {
+		return $rows;
+	}
+
+	foreach ($rows['after_subtotal'] as $group_key => $group) {
+		if ($group_key === 'tips') {
+			unset($rows['after_subtotal'][$group_key]);
+			continue;
+		}
+
+		if (empty($group['items']) || !is_array($group['items'])) {
+			continue;
+		}
+
+		$group['items'] = array_values(array_filter($group['items'], function($item): bool {
+			return !lp_order_tips_breakdown_item_is_tip($item);
+		}));
+
+		if (empty($group['items'])) {
+			unset($rows['after_subtotal'][$group_key]);
+			continue;
+		}
+
+		$rows['after_subtotal'][$group_key] = $group;
+	}
+
+	return $rows;
+}
+
+/**
  * Some LatePoint installs have order intents but no order_intent_meta table.
  * Avoid calling intent meta methods there, because WordPress logs DB errors for every step.
  */
@@ -62,6 +346,8 @@ function lp_order_tips_order_intent_meta_table_exists(): bool {
 }
 
 function lp_order_tips_add_tip_row_to_breakdown(array $rows, float $percent, float $tip_amount): array {
+	$rows = lp_order_tips_remove_tip_rows_from_breakdown($rows);
+
 	if ($tip_amount <= 0) {
 		return $rows;
 	}
@@ -69,9 +355,6 @@ function lp_order_tips_add_tip_row_to_breakdown(array $rows, float $percent, flo
 	if (!isset($rows['after_subtotal']) || !is_array($rows['after_subtotal'])) {
 		$rows['after_subtotal'] = [];
 	}
-
-	// Защита от дублей, если LatePoint перегенерирует breakdown несколько раз.
-	unset($rows['after_subtotal']['tips']);
 
 	$item = [
 		'label'     => __('Tip', 'latepoint'),
@@ -214,6 +497,11 @@ function lp_order_tips_get_amount($cart): float {
  * Register step after Verify Order Details.
  */
 add_filter('latepoint_get_step_codes_with_rules', function(array $steps): array {
+	if (lp_order_tips_get_request_order_item_id() > 0) {
+		unset($steps[lp_order_tips_step_code()]);
+		return $steps;
+	}
+
 	$steps[lp_order_tips_step_code()] = [
 		'after'  => 'verify',
 		'before' => 'payment',
@@ -260,6 +548,12 @@ add_action('latepoint_load_step', function($step_code, $format = 'json'): void {
 	}
 
 	$cart = lp_order_tips_get_current_cart();
+
+	if (lp_order_tips_is_existing_order_scheduling($cart)) {
+		lp_order_tips_clear_percent($cart);
+		return;
+	}
+
 	$saved_percent = $cart ? get_transient(lp_order_tips_transient_key($cart)) : false;
 	$current_percent = ($saved_percent === false)
 		? lp_order_tips_default_percent()
@@ -361,6 +655,11 @@ add_action('latepoint_process_step', function($step_code): void {
 	}
 
 	$cart = lp_order_tips_get_current_cart();
+	if (lp_order_tips_is_existing_order_scheduling($cart)) {
+		lp_order_tips_clear_percent($cart);
+		return;
+	}
+
 	lp_order_tips_save_selection_from_request($cart, lp_order_tips_default_percent());
 	lp_order_tips_sync_cart_and_order_intent($cart);
 }, 20);
@@ -375,7 +674,8 @@ add_action('latepoint_load_step', function($step_code): void {
 
 	$cart = lp_order_tips_get_current_cart();
 
-	if (!$cart || lp_order_tips_cart_is_empty($cart)) {
+	if (!$cart || lp_order_tips_cart_is_empty($cart) || lp_order_tips_is_existing_order_scheduling($cart)) {
+		lp_order_tips_clear_percent($cart);
 		return;
 	}
 
@@ -390,7 +690,12 @@ add_action('latepoint_load_step', function($step_code): void {
 }, 5);
 
 add_action('latepoint_cart_summary_before_price_breakdown', function($cart): void {
-	if (!$cart || lp_order_tips_cart_is_empty($cart) || (float) $cart->subtotal <= 0) {
+	if (!lp_order_tips_request_is_checkout_tail()) {
+		return;
+	}
+
+	if (!$cart || lp_order_tips_cart_is_empty($cart) || lp_order_tips_is_existing_order_scheduling($cart) || (float) $cart->subtotal <= 0) {
+		lp_order_tips_clear_percent($cart);
 		return;
 	}
 
@@ -429,6 +734,11 @@ function lp_order_tips_clear_percent($cart): void {
  */
 function lp_order_tips_sync_cart_and_order_intent($cart): void {
 	if (!$cart) {
+		return;
+	}
+
+	if (lp_order_tips_is_existing_order_scheduling($cart)) {
+		lp_order_tips_clear_percent($cart);
 		return;
 	}
 
@@ -527,7 +837,11 @@ add_action('latepoint_cart_calculate_prices', function($cart): void {
 		return;
 	}
 
-	if (!$cart || lp_order_tips_cart_is_empty($cart) || (float) $cart->subtotal <= 0) {
+	if (!lp_order_tips_request_is_checkout_tail()) {
+		return;
+	}
+
+	if (!$cart || lp_order_tips_cart_is_empty($cart) || lp_order_tips_is_existing_order_scheduling($cart) || (float) $cart->subtotal <= 0) {
 		lp_order_tips_clear_percent($cart);
 		return;
 	}
@@ -674,7 +988,11 @@ add_action('admin_footer', 'lp_order_tips_print_custom_amount_script', 1002);
  * Show tip in cost breakdown.
  */
 add_filter('latepoint_cart_price_breakdown_rows', function(array $rows, $cart, array $rows_to_hide): array {
-	if (!$cart || lp_order_tips_cart_is_empty($cart) || (float) $cart->subtotal <= 0) {
+	if (!lp_order_tips_request_is_checkout_tail()) {
+		return $rows;
+	}
+
+	if (!$cart || lp_order_tips_cart_is_empty($cart) || lp_order_tips_is_existing_order_scheduling($cart) || (float) $cart->subtotal <= 0) {
 		lp_order_tips_clear_percent($cart);
 		return $rows;
 	}
