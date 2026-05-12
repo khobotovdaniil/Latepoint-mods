@@ -27,6 +27,7 @@ Recommended production files:
 - `latepoint-add-tips-before-checkout/latepoint-invoice-tips.php`
 - `latepoint-add-tips-before-checkout/latepoint-tips-order.php`
 - `Latepoint-fix/latepoint-coupon-admin-discount-fix.php`
+- `Latepoint-fix/latepoint-customer-hidden-fields-preserve.php`
 - `Latepoint-fix/latepoint-empty-cart-checkout-guard.php`
 - `Latepoint-fix/latepoint-midnight-datetime-normalizer.php`
 - `Latepoint-fix/latepoint-reload-after-payment-close.php`
@@ -91,6 +92,28 @@ Keeps coupon credit rows negative in LatePoint price breakdowns.
 This plugin is independent from the tips plugins, but it touches the same
 price-breakdown area. Keep it active if coupon discounts can appear as positive
 values or be overwritten by input masks.
+
+### `Latepoint-fix/latepoint-customer-hidden-fields-preserve.php`
+
+Preserves LatePoint Pro Features customer custom fields that are not editable by
+customers during booking.
+
+- Protects customer fields with visibility `Temporary hidden` or
+  `Admin and agents only`.
+- Prevents hidden/admin-only customer meta from being overwritten with an empty
+  value when the customer moves from Customer Information to Verify Order
+  Details.
+- Stashes protected customer meta at the customer booking-step boundary and
+  restores it after LatePoint finishes processing the step.
+- Also guards model-level customer/meta saves in case Pro Features saves an
+  empty custom field directly.
+- Leaves admin and agent contexts untouched so staff can still view and edit
+  those fields from LatePoint admin/profile screens.
+- Supports staging and production prefixes through LatePoint's
+  `LATEPOINT_TABLE_CUSTOMER_META` table constant.
+
+Debug logging is off unless `ISU_LATEPOINT_HIDDEN_FIELDS_DEBUG` is defined and
+truthy, or the `isu_latepoint_hidden_fields_debug_enabled` filter returns true.
 
 ### `Latepoint-fix/latepoint-empty-cart-checkout-guard.php`
 
@@ -267,6 +290,8 @@ Use all three together for production midnight support.
    - cart icon count and checkout lightbox;
    - header cart checkout with a bundle in the cart;
    - Back from Order Details to Customer Information, then Back to start;
+   - hidden/admin-only customer custom fields survive Customer Information to
+     Verify Order Details;
    - customer dashboard Past/Cancelled/Orders pagination;
    - customer profile timezone save and dashboard refresh;
    - empty-cart removal on Customer and Service steps;
