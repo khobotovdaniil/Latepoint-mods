@@ -24,6 +24,7 @@ Important consequences:
 
 Recommended production files:
 
+- `latepoint-fresh-invoices/latepoint-fresh-invoices.php`
 - `latepoint-add-tips-before-checkout/latepoint-invoice-tips.php`
 - `latepoint-add-tips-before-checkout/latepoint-tips-order.php`
 - `Latepoint-fix/latepoint-coupon-admin-discount-fix.php`
@@ -47,6 +48,35 @@ the customer dashboard pagination and disables the older client-side pagination
 hook defensively, but keeping only one active dashboard owner is cleaner.
 
 ## Plugins
+
+### `latepoint-fresh-invoices/latepoint-fresh-invoices.php`
+
+Keeps manually created LatePoint invoices, payment links, and order dashboard
+totals synchronized with the current order and the manually entered invoice
+amount.
+
+- Rebuilds new invoice data from the current order when an invoice is created or
+  updated.
+- Preserves the final amount entered manually on the invoice.
+- Adds `Manual invoice discount` when the invoice amount is lower than the
+  current order total.
+- Adds `Additional services` when the invoice amount is higher than the current
+  order total.
+- Syncs invoice `charge_amount` and open transaction intents so payment links
+  charge the actual invoice amount.
+- Works with invoice tips: paid tips are included in order/dashboard totals only
+  after successful payment.
+- Ignores abandoned checkout tip selections for unpaid invoices, so an unpaid
+  order does not get a fake balance from a tip the customer did not pay.
+- Protects paid orders after admin `Recalculate`: the dashboard total, payment
+  status, and balance stay aligned to the paid invoice total.
+
+This plugin intentionally stays separate from
+`latepoint-add-tips-before-checkout`. The tips plugin owns tip selection and tip
+metadata; this plugin owns invoice/order normalization. It runs invoice route
+hooks at priority `8`, before invoice tip route handling at priority `9`, and
+runs order/transaction normalization at priority `50`, after the existing
+price-breakdown and tip filters.
 
 ### `latepoint-add-tips-before-checkout/latepoint-invoice-tips.php`
 
@@ -79,6 +109,9 @@ checkout orders.
 
 This plugin is for regular cart/order checkout. It complements, but does not
 replace, the invoice tips plugin.
+
+Use `latepoint-fresh-invoices.php` together with this file when manual invoices
+can be edited, recreated, discounted, increased, or recalculated after payment.
 
 ### `Latepoint-fix/latepoint-coupon-admin-discount-fix.php`
 
@@ -286,6 +319,12 @@ Use all three together for production midnight support.
 5. Test:
    - normal checkout with and without tips;
    - invoice payment request with percent and custom tips;
+   - manually created invoice lower than the current order total;
+   - manually created invoice higher than the current order total;
+   - recreated invoice after removing or changing an order item;
+   - invoice payment link amount after a manual invoice total override;
+   - paid invoice with tips, then admin `Recalculate` inside the order;
+   - unpaid invoice where the customer selected a tip but abandoned payment;
    - successful payment close and page reload;
    - cart icon count and checkout lightbox;
    - header cart checkout with a bundle in the cart;
